@@ -2764,7 +2764,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "redshift-iam-rs"
+name = "redshift-iam"
 version = "0.1.0"
 dependencies = [
  "anyhow",

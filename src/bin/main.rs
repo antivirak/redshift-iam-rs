@@ -4,6 +4,7 @@
 #![allow(clippy::result_large_err)]
 
 use std::collections::HashMap;
+use std::env;
 use std::str;
 
 // use aws_config;
@@ -17,8 +18,6 @@ use tokio::runtime::Runtime;
 // use reqwest;
 use scraper::{ElementRef, Html, Selector};
 use secrecy::{ExposeSecret, SecretString};
-use url::Url;
-use urlparse::quote_plus;
 
 mod re {
     use regex::Regex;
@@ -70,7 +69,7 @@ pub struct PingCredentialsProvider {
 ///Identity Provider Plugin providing single sign-on access to an Amazon Redshift cluster using PingOne.
 impl PingCredentialsProvider {
     // See Amazon Redshift docs
-    // <https://docs.aws.amazon.com/redshift/latest/mgmt/options-for-providing-iam-credentials.html#setup-pingfederate-identity-provider>_
+    // <https://docs.aws.amazon.com/redshift/latest/mgmt/options-for-providing-iam-credentials.html>_
     // for setup instructions.
 
     pub fn new(
@@ -307,22 +306,22 @@ async fn get_credentials(
 
 fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     // inputs:
-    let host = "";
-    let port = 5439; // could be default
-    let database = "".to_string();
+    let host = env::var("HOST")?;
+    let port = env::var("PORT")?; // could be default
+    let database = env::var("DATABASE")?;
     let query = "".to_string();
 
     let rt = Runtime::new()?;
     let (user, password) = rt.block_on(async {
         // inputs only used in async scope:
-        let user = "".to_string();
-        let password = SecretString::new(String::from("").into_boxed_str());
-        let cluster = "".to_string();
+        let user = env::var("USER").unwrap().to_string();
+        let password = SecretString::new(String::from(env::var("PWD").unwrap()).into_boxed_str());
+        let cluster = env::var("CLUSTER").unwrap().to_string();
         let autocreate = false;
-        let preferred_role = "".to_string();
-        let idp_host = "";
+        let preferred_role = env::var("ROLE_ARN").unwrap().to_string();
+        let idp_host = env::var("IDP_HOST").unwrap();
 
-        let aws_credentials = get_credentials(idp_host, 443, &user, password, preferred_role)
+        let aws_credentials = get_credentials(&idp_host, 443, &user, password, preferred_role)
             .await
             .unwrap();
 
@@ -347,14 +346,16 @@ fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
             .await
             .unwrap(); //?
 
-        let user = quote_plus(cluster_creds.db_user.unwrap(), b"").unwrap(); //?
-        let password = quote_plus(cluster_creds.db_password.unwrap(), b"").unwrap(); //?
+        let user = cluster_creds.db_user.unwrap();
+        let password = cluster_creds.db_password.unwrap();
         (user, password)
     });
 
-    // redshift/clickhouse are not compatible with the 'binary/csv' protocol
-    let uri = format!("postgresql://{user}:{password}@{host}:{port}/{database}?cxprotocol=cursor");
-    let redshift_url = Url::parse(&uri).unwrap();
+    let uri = format!("postgresql://{host}:{port}/{database}?cxprotocol=cursor");
+    let mut redshift_url = reqwest::Url::parse(&uri).unwrap();
+    // URL-encode credentials
+    redshift_url.set_username(&user).unwrap();
+    redshift_url.set_password(Some(&password)).unwrap();
 
     // could make more flexible by letting user specify output format
     let destination = connectorx::get_arrow::get_arrow(

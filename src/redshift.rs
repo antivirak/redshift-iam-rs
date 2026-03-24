@@ -19,8 +19,8 @@ impl Redshift {
         host: impl ToString,
         port: Option<u16>,
         database: impl ToString,
-    ) -> Redshift {
-        Redshift {
+    ) -> Self {
+        Self {
             username: username.to_string(),
             password: password.to_string(),
             host: host.to_string(),

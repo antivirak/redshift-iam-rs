@@ -7,10 +7,15 @@ use secrecy::SecretString;
 use redshift_iam::prelude::*;
 
 fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
+    // Example usage
     // inputs:
     let host = env::var("HOST")?;
     let database = env::var("DATABASE")?;
     let query = "";
+    // NOTE: if you query redshift SUPER type, the underlying rust-postgres raises error
+    // tip: you can cast SUPER to varchar for strings up to ~50_000 characters long
+    // or JSON_SERIALIZE json to varchar
+    // more info: https://docs.aws.amazon.com/redshift/latest/dg/r_Character_types.html
 
     let user = env::var("USER")?;
     let password = SecretString::new(env::var("PWD").unwrap().into_boxed_str());

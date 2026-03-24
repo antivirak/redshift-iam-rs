@@ -17,8 +17,8 @@ impl IamProvider {
         database: impl ToString,
         cluster: impl ToString,
         autocreate: bool,
-    ) -> IamProvider {
-        IamProvider {
+    ) -> Self {
+        Self {
             user: user.to_string(),
             database: database.to_string(),
             cluster: cluster.to_string(),
@@ -31,8 +31,9 @@ impl IamProvider {
         self.user.clone()
     }
 
-    pub fn set_region(&mut self, region: impl ToString) {
+    pub fn set_region(mut self, region: impl ToString) -> Self {
         self.region = region.to_string();
+        self
     }
 
     pub fn region(&self) -> String {

@@ -144,14 +144,14 @@ impl PingCredentialsProvider {
         idp_port: Option<u16>,
         user_name: impl ToString,
         password: SecretString,
-    ) -> PingCredentialsProvider {
+    ) -> Self {
         // We could either accept pwd and create secretString here or force user to pass it
         let partner_sp_id = if let Some(partner_sp_id) = partner_sp_id_option {
             partner_sp_id.to_string()
         } else {
             "urn%3Aamazon%3Awebservices".to_string()
         };
-        PingCredentialsProvider {
+        Self {
             partner_sp_id,
             idp_host: idp_host.to_string(),
             idp_port: idp_port.unwrap_or(443),
@@ -166,7 +166,7 @@ impl PingCredentialsProvider {
     }
 
     // @property
-    fn do_verify_ssl_cert(&self) -> bool {
+    pub fn do_verify_ssl_cert(&self) -> bool {
         !self.ssl_insecure
     }
 

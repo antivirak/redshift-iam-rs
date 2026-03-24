@@ -4,22 +4,17 @@ use aws_sdk_sts as sts;
 // use secrecy::SecretString;
 use tokio::runtime::Runtime;
 
-use crate::saml_provider::PingCredentialsProvider;
+use crate::saml_provider::SamlProvider;
 
-pub struct IamProvider {
-    provider: PingCredentialsProvider, // TODO generic
+pub struct IamProvider<T: SamlProvider> {
+    provider: T,
     database: String,
     cluster: String,
     autocreate: bool,
 }
 
-impl IamProvider {
-    pub fn new(
-        provider: PingCredentialsProvider,
-        database: String,
-        cluster: String,
-        autocreate: bool,
-    ) -> IamProvider {
+impl<T: SamlProvider> IamProvider<T> {
+    pub fn new(provider: T, database: String, cluster: String, autocreate: bool) -> IamProvider<T> {
         IamProvider {
             provider,
             database,

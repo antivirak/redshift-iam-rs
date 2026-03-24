@@ -2,7 +2,6 @@
 
 use std::env;
 
-// use aws_config;
 // use connectorx;
 use tokio::runtime::Runtime;
 // use reqwest;
@@ -40,6 +39,16 @@ fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         IamProvider::new(ping_provider, database.clone(), cluster, autocreate)
             .auth(aws_credentials);
 
+    /*
+    impl DatabaseSettings {
+        pub fn connection_string(&self) -> String {
+            format!(
+                "postgres://{}:{}@{}:{}/{}",
+                self.username, self.password, self.host, self.port, self.database_name
+            )
+        }
+    }
+    */
     let uri = format!("postgresql://{host}:{port}/{database}?cxprotocol=cursor");
     let mut redshift_url = reqwest::Url::parse(&uri).unwrap();
     // URL-encode credentials

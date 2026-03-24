@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::str;
 
 // use aws_config;
@@ -9,6 +10,16 @@ use scraper::{ElementRef, Html, Selector};
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::re;
+
+pub trait SamlProvider {
+    fn user(&self) -> String;
+
+    // fn do_verify_ssl_cert(&self) -> bool;
+
+    ///Get SAML assertion.
+    fn get_saml_assertion(&self) -> impl Future<Output = String>;
+    //async fn get_saml_assertion(&self) -> String;
+}
 
 fn is_password(inputtag: &ElementRef) -> bool {
     inputtag.attr("type") == Some("password")
@@ -38,8 +49,8 @@ fn get_form_action(soup: &Html) -> Option<&str> {
     None
 }
 
-pub async fn get_credentials(
-    provider: &PingCredentialsProvider, // TODO generic
+pub async fn get_credentials<T: SamlProvider>(
+    provider: &T,
     role_arn: String,
 ) -> Option<sts::types::Credentials> {
     // refresh method alias
@@ -154,9 +165,15 @@ impl PingCredentialsProvider {
     fn do_verify_ssl_cert(&self) -> bool {
         !self.ssl_insecure
     }
+}
+
+impl SamlProvider for PingCredentialsProvider {
+    fn user(&self) -> String {
+        self.user()
+    }
 
     ///Get SAML assertion.
-    pub async fn get_saml_assertion(&self) -> String {
+    async fn get_saml_assertion(&self) -> String {
         // Method to grab the SAML Response. Used to refresh temporary credentials.
         debug!("PingCredentialsProvider.get_saml_assertion");
         let session = reqwest::Client::builder() // scoped only in this method

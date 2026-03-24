@@ -1,26 +1,42 @@
 use aws_credential_types::Credentials;
 use aws_sdk_redshift as redshift;
 use aws_sdk_sts as sts;
-// use secrecy::SecretString;
 use tokio::runtime::Runtime;
 
-use crate::saml_provider::SamlProvider;
-
-pub struct IamProvider<T: SamlProvider> {
-    provider: T,
+pub struct IamProvider {
+    user: String,
     database: String,
     cluster: String,
     autocreate: bool,
+    region: String,
 }
 
-impl<T: SamlProvider> IamProvider<T> {
-    pub fn new(provider: T, database: String, cluster: String, autocreate: bool) -> IamProvider<T> {
+impl IamProvider {
+    pub fn new(
+        user: impl ToString,
+        database: impl ToString,
+        cluster: impl ToString,
+        autocreate: bool,
+    ) -> IamProvider {
         IamProvider {
-            provider,
-            database,
-            cluster,
+            user: user.to_string(),
+            database: database.to_string(),
+            cluster: cluster.to_string(),
             autocreate,
+            region: "us-east-1".to_string(),
         }
+    }
+
+    fn user(&self) -> String {
+        self.user.clone()
+    }
+
+    pub fn set_region(&mut self, region: impl ToString) {
+        self.region = region.to_string();
+    }
+
+    pub fn region(&self) -> String {
+        self.region.clone()
     }
 
     pub fn auth(&self, aws_credentials: sts::types::Credentials) -> (String, String) {
@@ -33,12 +49,12 @@ impl<T: SamlProvider> IamProvider<T> {
             );
             let config = redshift::Config::builder()
                 .credentials_provider(creds)
-                .region(Some(redshift::config::Region::new("us-east-1"))) // default
+                .region(Some(redshift::config::Region::new(self.region())))
                 .build();
             let client = redshift::Client::from_conf(config);
             let cluster_creds = client
                 .get_cluster_credentials()
-                .set_db_user(Some(self.provider.user()))
+                .set_db_user(Some(self.user()))
                 .set_db_name(Some(self.database.clone()))
                 .set_cluster_identifier(Some(self.cluster.clone()))
                 .set_duration_seconds(Some(3600))
@@ -47,9 +63,10 @@ impl<T: SamlProvider> IamProvider<T> {
                 .await
                 .unwrap(); //?
 
-            let user = cluster_creds.db_user.unwrap();
-            let password = cluster_creds.db_password.unwrap();
-            (user, password)
+            (
+                cluster_creds.db_user.unwrap(),
+                cluster_creds.db_password.unwrap(),
+            )
         })
     }
 }

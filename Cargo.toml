@@ -8,6 +8,7 @@ anyhow = {
     version = "1.0.102",
     features = ["backtrace"],
 }
+arrow = "54.3.1"
 aws-config = { version = "1.8.15", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.14", features = ["hardcoded-credentials"] }
 aws-sdk-redshift = { version = "1.101.1", features = ["behavior-version-latest"] }

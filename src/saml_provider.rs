@@ -6,19 +6,18 @@ use std::str;
 use aws_sdk_sts as sts;
 use base64::prelude::*;
 use log::debug;
+// use reqwest;
 use scraper::{ElementRef, Html, Selector};
 use secrecy::{ExposeSecret, SecretString};
+use tokio::runtime::Runtime;
 
 use crate::re;
 
 pub trait SamlProvider {
     fn user(&self) -> String;
 
-    // fn do_verify_ssl_cert(&self) -> bool;
-
     ///Get SAML assertion.
     fn get_saml_assertion(&self) -> impl Future<Output = String>;
-    //async fn get_saml_assertion(&self) -> String;
 }
 
 fn is_password(inputtag: &ElementRef) -> bool {
@@ -125,12 +124,12 @@ pub async fn get_credentials<T: SamlProvider>(
 }
 
 pub struct PingCredentialsProvider {
-    pub partner_sp_id: String, // pub, so anyone can change it without setter
+    partner_sp_id: String,
     idp_host: String,
     idp_port: u16,
     user_name: String,
     password: SecretString,
-    ssl_insecure: bool,
+    pub ssl_insecure: bool, // pub, so anyone can change it without setter
 }
 
 ///Identity Provider Plugin providing single sign-on access to an Amazon Redshift cluster using PingOne.
@@ -140,17 +139,22 @@ impl PingCredentialsProvider {
     // for setup instructions.
 
     pub fn new(
+        partner_sp_id_option: Option<impl ToString>,
         idp_host: impl ToString,
-        idp_port: u16,
+        idp_port: Option<u16>,
         user_name: impl ToString,
         password: SecretString,
-        // TODO: kwargs either as builder or as Option<>. For now I hardcode them.
     ) -> PingCredentialsProvider {
         // We could either accept pwd and create secretString here or force user to pass it
+        let partner_sp_id = if let Some(partner_sp_id) = partner_sp_id_option {
+            partner_sp_id.to_string()
+        } else {
+            "urn%3Aamazon%3Awebservices".to_string()
+        };
         PingCredentialsProvider {
-            partner_sp_id: "urn%3Aamazon%3Awebservices".to_string(),
+            partner_sp_id,
             idp_host: idp_host.to_string(),
-            idp_port, // could be 443 by default
+            idp_port: idp_port.unwrap_or(443),
             user_name: user_name.to_string(),
             password,
             ssl_insecure: false,
@@ -164,6 +168,14 @@ impl PingCredentialsProvider {
     // @property
     fn do_verify_ssl_cert(&self) -> bool {
         !self.ssl_insecure
+    }
+
+    pub fn get_credentials(
+        &self,
+        preferred_role: impl ToString,
+    ) -> Option<sts::types::Credentials> {
+        let rt = Runtime::new().unwrap(); //?
+        rt.block_on(async { get_credentials(self, preferred_role.to_string()).await })
     }
 }
 

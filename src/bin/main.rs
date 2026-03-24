@@ -2,67 +2,37 @@
 
 use std::env;
 
-// use connectorx;
-use tokio::runtime::Runtime;
-// use reqwest;
 use secrecy::SecretString;
 
-use redshift_iam::iam_provider::IamProvider;
-use redshift_iam::saml_provider::{PingCredentialsProvider, get_credentials};
+use redshift_iam::prelude::*;
 
 fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
-    // TODO: Rc<char> instead of String?
     // inputs:
     let host = env::var("HOST")?;
-    let port = env::var("PORT")?; // could be default
     let database = env::var("DATABASE")?;
-    let query = "".to_string();
+    let query = "";
 
-    // inputs only used in async scope:
-    let user = env::var("USER").unwrap().to_string();
+    let user = env::var("USER")?;
     let password = SecretString::new(env::var("PWD").unwrap().into_boxed_str());
-    let cluster = env::var("CLUSTER").unwrap().to_string();
+    let cluster = env::var("CLUSTER")?;
     let autocreate = false;
-    let preferred_role = env::var("ROLE_ARN").unwrap().to_string();
-    let idp_host = env::var("IDP_HOST").unwrap();
+    let preferred_role = env::var("ROLE_ARN")?;
+    let idp_host = env::var("IDP_HOST")?;
 
-    let ping_provider = PingCredentialsProvider::new(idp_host, 443, user, password);
-
-    let rt = Runtime::new()?;
-    let aws_credentials = rt.block_on(async {
-        get_credentials(&ping_provider, preferred_role)
-            .await
-            .unwrap()
-    });
+    // Get aws_credentials from ping
+    let ping_provider =
+        PingCredentialsProvider::new(None::<String>, idp_host, None, user, password);
+    let aws_credentials = ping_provider.get_credentials(preferred_role).unwrap();
+    // or get them by any other means
 
     let (username, password) =
-        IamProvider::new(ping_provider, database.clone(), cluster, autocreate)
+        IamProvider::new(ping_provider.user(), database.clone(), cluster, autocreate)
+            // .set_region()
             .auth(aws_credentials);
 
-    /*
-    impl DatabaseSettings {
-        pub fn connection_string(&self) -> String {
-            format!(
-                "postgres://{}:{}@{}:{}/{}",
-                self.username, self.password, self.host, self.port, self.database_name
-            )
-        }
-    }
-    */
-    let uri = format!("postgresql://{host}:{port}/{database}?cxprotocol=cursor");
-    let mut redshift_url = reqwest::Url::parse(&uri).unwrap();
-    // URL-encode credentials
-    redshift_url.set_username(&username).unwrap();
-    redshift_url.set_password(Some(&password)).unwrap();
+    let conn = Redshift::new(username, password, host, None, database);
 
-    // could make more flexible by letting user specify output format
-    let destination = connectorx::get_arrow::get_arrow(
-        &connectorx::source_router::SourceConn::try_from(redshift_url.as_str()).unwrap(),
-        None,
-        &[connectorx::sql::CXQuery::Naked(query)],
-        None,
-    )?;
-    let rbs = destination.arrow()?;
+    let rbs = conn.execute(query)?;
     println!("{rbs:?}");
 
     Ok(())

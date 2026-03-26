@@ -61,15 +61,21 @@ pub mod prelude {
 /// | `IdP_Host` | PingFederate hostname. If absent, falls back to ambient AWS credentials |
 /// | `IdP_Port` | PingFederate port (default: `443`) |
 /// | `Preferred_Role` | IAM role ARN to assume via SAML |
-/// | `Plugin_Name` | Ignored (reserved for Java driver compatibility) |
+///
+/// The `provider_factory` closure receives `(idp_host, idp_port, username, password)` and
+/// returns any type implementing [`SamlProvider`]. The closure is **not called** when
+/// `IdP_Host` or password are absent from the URI — ambient AWS credentials are used instead.
+/// The concrete type returned by the closure determines which IdP implementation is used,
+/// replacing the old `Plugin_Name` string-based dispatch.
 ///
 /// # Errors
 ///
 /// Returns [`ConnectorXOutError::SourceNotSupport`] if the URI does not start with
 /// `redshift:iam://`.
-pub fn read_sql(
+pub fn read_sql<T: SamlProvider>(
     query: &str,
     connection_uri: impl ToString,
+    provider_factory: impl FnOnce(&str, Option<u16>, &str, SecretString) -> T,
 ) -> Result<Vec<RecordBatch>, ConnectorXOutError> {
     let uri_string = connection_uri.to_string();
     let mut uri_str = uri_string.trim();
@@ -125,23 +131,13 @@ pub fn read_sql(
             .build()
             .unwrap()
     } else {
-        let plugin_string = params.get("plugin_name").map_or(String::new(), |val| val.to_lowercase());
-        let plugin = plugin_string.trim_start_matches("com.amazon.redshift.plugin.");
-        let plugin_expected = "pingcredentialsprovider";
-        if !plugin.is_empty() && plugin != plugin_expected {
-            panic!("Expected {plugin_expected}; feel free to contribute other provider implementation");
-        }
-        let ping_provider = PingCredentialsProvider::new(
-            None::<String>,
+        let provider = provider_factory(
             idp_host,
             idp_port,
             redshift_url.username(),
             SecretString::new(pwd.to_string().into_boxed_str()),
         );
-        // TODO: validate arn format?
-        ping_provider
-            .get_credentials(params.get("preferred_role").map_or("", |val| val))
-            .unwrap()
+        aws_creds_from_saml(provider, params.get("preferred_role").map_or("", |val| val))
     };
 
     let mut iam_provider = IamProvider::new(redshift_url.username(), database, cluster, autocreate);
@@ -158,4 +154,20 @@ pub fn read_sql(
         database,
     )
     .execute(query)
+}
+
+/// Obtains temporary AWS credentials from any [`SamlProvider`] synchronously.
+///
+/// Drives the async [`saml_provider::get_credentials`] on a new Tokio runtime.
+/// Separated from [`read_sql`] so the generic bound is isolated to this function.
+fn aws_creds_from_saml<T: SamlProvider>(
+    provider: T,
+    preferred_role: &str,
+) -> sts::types::Credentials {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(crate::saml_provider::get_credentials(
+        &provider,
+        preferred_role.to_string(),
+    ))
+    .unwrap()
 }

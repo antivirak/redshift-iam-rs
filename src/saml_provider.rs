@@ -5,7 +5,7 @@ use std::str;
 // use aws_config;
 use aws_sdk_sts as sts;
 use base64::prelude::*;
-use log::debug;
+use log::{debug, warn};
 // use reqwest;
 use scraper::{ElementRef, Html, Selector};
 use secrecy::{ExposeSecret, SecretString};
@@ -36,9 +36,9 @@ fn get_form_action(soup: &Html) -> Option<&str> {
         let action = inputtag.attr("action");
         if action.is_some() {
             let method = inputtag.attr("form method");
+            // safe unwrap
             if method.is_some() && method.unwrap().to_uppercase() != "POST" {
-                // safe unwrap
-                println!("Warning: found action, but method is not POST. Skipping.");
+                warn!("Warning: found action, but method is not POST. Skipping.");
                 continue;
             }
             return action;
@@ -123,6 +123,26 @@ pub async fn get_credentials<T: SamlProvider>(
     response.credentials
 }
 
+/// Extracts the SAMLResponse assertion value from the IdP authentication response HTML.
+/// Panics if no `SAMLResponse` input tag is found.
+pub fn parse_saml_assertion(html: &str) -> String {
+    let soup = Html::parse_document(html);
+    let selector = Selector::parse("INPUT").unwrap();
+    let mut assertion = String::new();
+    for inputtag in soup.select(&selector) {
+        if inputtag.attr("name") == Some("SAMLResponse") {
+            debug!("SAMLResponse tag found");
+            assertion = inputtag.attr("value").unwrap().to_string();
+        }
+    }
+    if assertion.is_empty() {
+        panic!(
+            "Failed to retrieve SAMLAssertion. An input tag named SAMLResponse was not identified in the Ping IdP authentication response"
+        );
+    }
+    assertion
+}
+
 pub struct PingCredentialsProvider {
     partner_sp_id: String,
     idp_host: String,
@@ -177,6 +197,64 @@ impl PingCredentialsProvider {
         let rt = Runtime::new().unwrap(); //?
         rt.block_on(async { get_credentials(self, preferred_role.to_string()).await })
     }
+
+    /// Parses the IdP login page HTML, extracting the form submission payload and
+    /// the form's action path. Panics if username or password fields cannot be found.
+    fn parse_login_form(&self, html: &str) -> (HashMap<String, String>, Option<String>) {
+        let soup = Html::parse_document(html);
+        let selector = Selector::parse("INPUT").unwrap();
+        let mut payload: HashMap<String, String> = HashMap::new();
+        let mut username_found = false;
+        let mut pwd_found = false;
+
+        debug!(
+            "Looking for username and password input tags in Ping IdP login page in order to build authentication request payload"
+        );
+        for inputtag in soup.select(&selector) {
+            let name = inputtag.attr("name").unwrap_or("").to_string();
+            let id_ = inputtag.attr("id").unwrap_or("");
+            debug!("name={name} , id={id_}");
+
+            if !username_found && is_text(&inputtag) && id_ == "username" {
+                debug!("Using tag with name {name} for username");
+                payload.insert(name, self.user());
+                username_found = true;
+            } else if is_password(&inputtag) && name.contains("pass") {
+                debug!("Using tag with name {name} for password");
+                if pwd_found {
+                    panic!(
+                        "Failed to parse Ping IdP login form. More than one password field was found on the Ping IdP login page"
+                    );
+                }
+                payload.insert(name, self.password.expose_secret().to_string());
+                pwd_found = true;
+            } else if !name.is_empty() {
+                let value = inputtag.attr("value").unwrap_or("").to_string();
+                payload.insert(name, value);
+            }
+        }
+
+        if !username_found {
+            debug!(
+                "username tag still not found, continuing search using secondary preferred tags"
+            );
+            for inputtag in soup.select(&selector) {
+                let name = inputtag.attr("name").unwrap_or("").to_string();
+                if is_text(&inputtag) && (name.contains("user") || name.contains("email")) {
+                    debug!("Using tag with name {name} for username");
+                    payload.insert(name, self.user());
+                    username_found = true;
+                }
+            }
+        }
+
+        if !username_found || !pwd_found {
+            panic!("Failed to parse Ping IdP login form field(s)");
+        }
+
+        let action = get_form_action(&soup).map(str::to_owned);
+        (payload, action)
+    }
 }
 
 impl SamlProvider for PingCredentialsProvider {
@@ -206,64 +284,13 @@ impl SamlProvider for PingCredentialsProvider {
         );
         let resp = session.get(&url).send().await.unwrap(); // TODO: , verify=self.do_verify_ssl_cert()
         debug!("Response code: {}", resp.status());
-        debug!("response length: {}", resp.content_length().unwrap());
+        debug!("response length: {}", resp.content_length().unwrap_or(0));
 
-        let resp_text = &resp.text().await.unwrap();
-        let soup = Html::parse_document(resp_text);
+        let resp_text = resp.text().await.unwrap();
+        let (payload, action) = self.parse_login_form(&resp_text);
 
-        let mut payload: HashMap<&str, &str> = HashMap::new();
-        let mut username_found = false;
-        let mut pwd_found = false;
-
-        debug!(
-            "Looking for username and password input tags in Ping IdP login page in order to build authentication request payload"
-        );
-        let selector = Selector::parse("INPUT").unwrap();
-        for inputtag in soup.select(&selector) {
-            let name = inputtag.attr("name").unwrap_or("");
-            let id_ = inputtag.attr("id").unwrap_or("");
-            debug!("name={name} , id={id_}");
-
-            if !username_found && is_text(&inputtag) && id_ == "username" {
-                debug!("Using tag with name {name} for username");
-                payload.insert(name, &self.user_name);
-                username_found = true;
-            } else if is_password(&inputtag) && name.contains("pass") {
-                debug!("Using tag with name {name} for password");
-                if pwd_found {
-                    let exec_msg = "Failed to parse Ping IdP login form. More than one password field was found on the Ping IdP login page";
-                    panic!("{exec_msg}"); // We cannot do much about it, just panic
-                }
-                payload.insert(name, self.password.expose_secret());
-                pwd_found = true;
-            } else if !name.is_empty() {
-                let value = inputtag.attr("value").unwrap_or("");
-                payload.insert(name, value);
-            }
-        }
-
-        if !username_found {
-            debug!(
-                "username tag still not found, continuing search using secondary preferred tags"
-            );
-            for inputtag in soup.select(&selector) {
-                let name = inputtag.attr("name").unwrap_or("");
-                if is_text(&inputtag) && (name.contains("user") || name.contains("email")) {
-                    debug!("Using tag with name {name} for username");
-                    payload.insert(name, &self.user_name);
-                    username_found = true;
-                }
-            }
-        }
-
-        if !username_found || !pwd_found {
-            let error_msg = "Failed to parse Ping IdP login form field(s)";
-            panic!("{error_msg}");
-        }
-
-        let action = get_form_action(&soup);
         // NOTE: not sure if we want to continue with the original url in None case
-        if let Some(action_str) = action
+        if let Some(action_str) = action.as_deref()
             && action_str.starts_with("/")
         {
             url = format!("https://{}:{}{action_str}", self.idp_host, self.idp_port);
@@ -293,21 +320,71 @@ impl SamlProvider for PingCredentialsProvider {
             );
         }
 
-        let soup = Html::parse_document(&resp_text);
+        parse_saml_assertion(&resp_text)
+    }
+}
 
-        let mut assertion = "";
-        for inputtag in soup.select(&selector) {
-            if inputtag.attr("name") == Some("SAMLResponse") {
-                debug!("SAMLResponse tag found");
-                assertion = inputtag.attr("value").unwrap();
-            }
-        }
+mod tests {
+    use super::*;
 
-        if assertion.is_empty() {
-            let exec_msg = "Failed to retrieve SAMLAssertion. An input tag named SAMLResponse was not identified in the Ping IdP authentication response";
-            panic!("{exec_msg}");
-        }
+    fn _make_valid_ping_credentials_provider() -> PingCredentialsProvider {
+        PingCredentialsProvider::new(
+            None::<String>,
+            "example.example.com",
+            None,
+            "user",
+            SecretString::new("pwd".to_string().into_boxed_str()),
+        )
+    }
 
-        assertion.to_string()
+    // parse_login_form tests
+    #[allow(unused)]
+    const LOGIN_PAGE_HTML: &str = r#"<html><body>
+    <form action="/idp/authLogin" method="POST">
+    <INPUT type="text" name="username" id="username" value="" />
+    <INPUT type="password" name="pf.pass" value="" />
+    <INPUT type="hidden" name="pf.ok" value="clicked" />
+    </form>
+    </body></html>"#;
+
+    #[test]
+    fn test_parse_login_form_extracts_credentials_and_hidden_fields() {
+        let scp = _make_valid_ping_credentials_provider();
+        let (payload, action) = scp.parse_login_form(LOGIN_PAGE_HTML);
+        assert_eq!(payload.get("username").map(String::as_str), Some("user"));
+        assert_eq!(payload.get("pf.pass").map(String::as_str), Some("pwd"));
+        assert_eq!(payload.get("pf.ok").map(String::as_str), Some("clicked"));
+        assert_eq!(action.as_deref(), Some("/idp/authLogin"));
+    }
+
+    #[test]
+    fn test_parse_login_form_secondary_username_lookup() {
+        let scp = _make_valid_ping_credentials_provider();
+        // No id="username"; falls back to matching by name containing "user"
+        let html = r#"<html><body><form action="/login">
+        <INPUT type="text" name="user_email" value="" />
+        <INPUT type="password" name="password" value="" />
+        </form></body></html>"#;
+        let (payload, _) = scp.parse_login_form(html);
+        assert_eq!(payload.get("user_email").map(String::as_str), Some("user"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to parse Ping IdP login form field(s)")]
+    fn test_parse_login_form_missing_fields_panics() {
+        let scp = _make_valid_ping_credentials_provider();
+        scp.parse_login_form("<html><body><form></form></body></html>");
+    }
+
+    #[test]
+    #[should_panic(expected = "More than one password field")]
+    fn test_parse_login_form_duplicate_password_panics() {
+        let scp = _make_valid_ping_credentials_provider();
+        let html = r#"<html><body><form>
+        <INPUT type="text" name="username" id="username" value="" />
+        <INPUT type="password" name="pf.pass" value="" />
+        <INPUT type="password" name="pf.pass2" value="" />
+        </form></body></html>"#;
+        scp.parse_login_form(html);
     }
 }

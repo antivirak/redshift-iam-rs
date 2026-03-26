@@ -4,7 +4,7 @@ use base64::prelude::*;
 use secrecy::{ExposeSecret, SecretString};
 
 use redshift_iam::prelude::*;
-use redshift_iam::saml_provider::{SamlProvider, get_credentials};
+use redshift_iam::saml_provider::{SamlProvider, get_credentials, parse_saml_assertion};
 
 // helpers
 
@@ -38,6 +38,27 @@ fn test_ping_ssl_insecure_disables_verify() {
 fn test_ping_user_getter() {
     let scp = make_valid_ping_credentials_provider();
     assert_eq!(scp.user(), "user");
+}
+
+// PingCredentialsProvider happy path
+
+const SAML_RESPONSE_HTML: &str = r#"<html><body>
+<form method="POST" action="https://signin.aws.amazon.com/saml">
+  <INPUT type="hidden" name="SAMLResponse" value="dGVzdA==" />
+</form>
+</body></html>"#;
+
+// parse_saml_assertion tests
+
+#[test]
+fn test_parse_saml_assertion_extracts_value() {
+    assert_eq!(parse_saml_assertion(SAML_RESPONSE_HTML), "dGVzdA==");
+}
+
+#[test]
+#[should_panic(expected = "Failed to retrieve SAMLAssertion")]
+fn test_parse_saml_assertion_missing_panics() {
+    parse_saml_assertion("<html><body><form></form></body></html>");
 }
 
 // get_credentials error-path tests
@@ -88,6 +109,15 @@ async fn test_refresh_saml_assertion_missing_role_should_fail() {
         "arn:aws:iam::123:role/my-role".to_string(),
     )
     .await;
+}
+
+// Sync path for PingCredentialsProvider::get_credentials
+
+#[test]
+#[should_panic(expected = "reqwest::Error")]
+fn test_sync_get_saml_assertion_fails_propagates() {
+    let scp = make_valid_ping_credentials_provider();
+    scp.get_credentials("arn:aws:iam::123:role/test".to_string());
 }
 
 // IamProvider tests

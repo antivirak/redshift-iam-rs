@@ -109,10 +109,6 @@ use redshift_iam::saml_provider::{SamlProvider, get_credentials};
 struct MyIdpProvider { /* ... */ }
 
 impl SamlProvider for MyIdpProvider {
-    fn user(&self) -> String {
-        "alice".to_string()
-    }
-
     async fn get_saml_assertion(&self) -> String {
         // call your own IdP and return the base64-encoded SAMLResponse value
         todo!()
@@ -127,11 +123,10 @@ let aws_credentials = get_credentials(
 .unwrap();
 ```
 
-The `SamlProvider` trait requires two items:
+The `SamlProvider` trait requires:
 
 | Item | Description |
 |---|---|
-| `fn user(&self) -> String` | The username to use for the Redshift DB user |
 | `async fn get_saml_assertion(&self) -> String` | Returns the base64-encoded SAML assertion |
 
 The live integration test (`cargo test test_live_connection -- --ignored`) reads credentials from the environment:

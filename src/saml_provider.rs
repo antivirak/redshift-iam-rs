@@ -15,9 +15,6 @@ use crate::re;
 
 /// Trait for identity providers that can supply a SAML assertion.
 pub trait SamlProvider {
-    /// user getter
-    fn user(&self) -> String;
-
     /// Fetches and returns a base64-encoded SAML assertion from the IdP.
     fn get_saml_assertion(&self) -> impl Future<Output = String>;
 }
@@ -45,7 +42,7 @@ fn get_form_action(soup: &Html) -> Option<&str> {
             let method = inputtag.attr("method");
             // safe unwrap
             if method.is_some() && method.unwrap().to_uppercase() != "POST" {
-                warn!("Warning: found action, but method is not POST. Skipping.");
+                warn!("Found action, but method is not POST. Skipping.");
                 continue;
             }
             return action;
@@ -162,6 +159,7 @@ pub fn parse_saml_assertion(html: &str) -> String {
 ///
 /// See the [Amazon Redshift IAM docs](https://docs.aws.amazon.com/redshift/latest/mgmt/options-for-providing-iam-credentials.html)
 /// for setup instructions.
+#[derive(Debug)]
 pub struct PingCredentialsProvider {
     partner_sp_id: String,
     idp_host: String,
@@ -283,10 +281,6 @@ impl PingCredentialsProvider {
 }
 
 impl SamlProvider for PingCredentialsProvider {
-    fn user(&self) -> String {
-        self.user()
-    }
-
     /// Logs in to the PingFederate IdP and returns a base64-encoded SAML assertion.
     ///
     /// Issues a GET to the SSO start URL, parses the login form, submits credentials,
@@ -357,6 +351,7 @@ impl SamlProvider for PingCredentialsProvider {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -371,7 +366,6 @@ mod tests {
     }
 
     // parse_login_form tests
-    #[allow(unused)]
     const LOGIN_PAGE_HTML: &str = r#"<html><body>
     <form action="/idp/authLogin" method="POST">
     <INPUT type="text" name="username" id="username" value="" />

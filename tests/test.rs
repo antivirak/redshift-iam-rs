@@ -67,10 +67,6 @@ fn test_parse_saml_assertion_missing_panics() {
 struct FailingSamlProvider;
 
 impl SamlProvider for FailingSamlProvider {
-    fn user(&self) -> String {
-        "test_user".to_string()
-    }
-
     async fn get_saml_assertion(&self) -> String {
         panic!("get_saml_assertion failed")
     }
@@ -91,10 +87,6 @@ async fn test_get_saml_assertion_fails_propagates() {
 struct NoRoleSamlProvider;
 
 impl SamlProvider for NoRoleSamlProvider {
-    fn user(&self) -> String {
-        "test_user".to_string()
-    }
-
     async fn get_saml_assertion(&self) -> String {
         // A valid base64-encoded XML document that contains no IAM role ARNs.
         BASE64_STANDARD.encode(b"<root></root>")

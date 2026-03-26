@@ -5,6 +5,7 @@ use tokio::runtime::Runtime;
 
 /// Exchanges temporary AWS credentials for short-lived Redshift cluster credentials
 /// via `redshift:GetClusterCredentials`.
+#[derive(Debug)]
 pub struct IamProvider {
     user: String,
     database: String,
@@ -69,7 +70,7 @@ impl IamProvider {
                 .set_db_user(Some(self.user()))
                 .set_db_name(Some(self.database.clone()))
                 .set_cluster_identifier(Some(self.cluster.clone()))
-                .set_duration_seconds(Some(3600))  // can be 900-3600
+                .set_duration_seconds(Some(3600)) // can be 900-3600
                 .set_auto_create(Some(self.autocreate))
                 .send()
                 .await

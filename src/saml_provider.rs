@@ -137,6 +137,18 @@ pub async fn get_credentials<T: SamlProvider>(
 
 /// Extracts the SAMLResponse assertion value from the IdP authentication response HTML.
 /// Panics if no `SAMLResponse` input tag is found.
+///
+/// # Examples
+/// ```
+/// use redshift_iam::saml_provider::parse_saml_assertion;
+///
+/// let html = r#"<html><body>
+/// <form method="POST" action="https://signin.aws.amazon.com/saml">
+///   <INPUT type="hidden" name="SAMLResponse" value="dGVzdA==" />
+/// </form>
+/// </body></html>"#;
+/// assert_eq!(parse_saml_assertion(html), "dGVzdA==");
+/// ```
 pub fn parse_saml_assertion(html: &str) -> String {
     let soup = Html::parse_document(html);
     let selector = Selector::parse("INPUT").unwrap();
@@ -176,6 +188,23 @@ impl PingCredentialsProvider {
     /// - `partner_sp_id`: The SP entity ID sent to PingFederate. `None` defaults to
     ///   `"urn%3Aamazon%3Awebservices"`.
     /// - `idp_port`: Defaults to `443` when `None`.
+    ///
+    /// # Examples
+    /// ```
+    /// use secrecy::SecretString;
+    /// use redshift_iam::PingCredentialsProvider;
+    ///
+    /// let scp = PingCredentialsProvider::new(
+    ///     None::<String>,
+    ///     "pingfed.example.com",
+    ///     None,
+    ///     "alice",
+    ///     SecretString::new("s3cr3t".to_string().into_boxed_str()),
+    /// );
+    /// assert!(!scp.ssl_insecure);
+    /// assert!(scp.do_verify_ssl_cert());
+    /// assert_eq!(scp.user(), "alice");
+    /// ```
     pub fn new(
         partner_sp_id_option: Option<impl ToString>,
         idp_host: impl ToString,

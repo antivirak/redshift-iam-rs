@@ -20,6 +20,19 @@ impl Redshift {
     /// Creates a new `Redshift` client.
     ///
     /// `port` defaults to `5439` when `None`.
+    ///
+    /// # Examples
+    /// ```
+    /// use redshift_iam::Redshift;
+    /// use secrecy::ExposeSecret;
+    ///
+    /// let r = Redshift::new("alice", "s3cr3t", "my-host.example.com", None, "analytics");
+    /// let cs = r.connection_string();
+    /// assert!(cs.expose_secret().starts_with("postgresql://"));
+    /// assert!(cs.expose_secret().contains(":5439/"));
+    /// assert!(cs.expose_secret().contains("my-host.example.com"));
+    /// assert!(cs.expose_secret().contains("/analytics"));
+    /// ```
     pub fn new(
         username: impl ToString,
         password: impl ToString,
@@ -43,6 +56,18 @@ impl Redshift {
     /// Credentials are percent-encoded so that special characters (e.g. `@`) do not
     /// corrupt the URL. The result is wrapped in a [`SecretString`] to prevent
     /// accidental logging.
+    ///
+    /// # Examples
+    /// ```
+    /// use redshift_iam::Redshift;
+    /// use secrecy::ExposeSecret;
+    ///
+    /// // Special characters in passwords are percent-encoded
+    /// let r = Redshift::new("user", "p@ssword", "host", None, "db");
+    /// let cs = r.connection_string();
+    /// assert!(cs.expose_secret().contains("p%40ssword"));
+    /// assert!(cs.expose_secret().contains("cxprotocol=cursor"));
+    /// ```
     pub fn connection_string(&self) -> SecretString {
         if let Some(connection_string) = &self.connection_string {
             return connection_string.clone();

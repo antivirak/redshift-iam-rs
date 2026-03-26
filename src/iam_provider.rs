@@ -20,6 +20,13 @@ impl IamProvider {
     /// - `autocreate`: When `true`, the Redshift user is created automatically if it
     ///   does not already exist.
     /// - The AWS region defaults to `"us-east-1"`; change it with [`set_region`](Self::set_region).
+    ///
+    /// # Examples
+    /// ```
+    /// use redshift_iam::IamProvider;
+    /// let iam = IamProvider::new("alice", "analytics", "my-cluster", false);
+    /// assert_eq!(iam.region(), "us-east-1");
+    /// ```
     pub fn new(
         user: impl ToString,
         database: impl ToString,
@@ -40,6 +47,14 @@ impl IamProvider {
     }
 
     /// Overrides the AWS region used when calling `GetClusterCredentials`.
+    ///
+    /// # Examples
+    /// ```
+    /// use redshift_iam::IamProvider;
+    /// let iam = IamProvider::new("alice", "analytics", "my-cluster", false)
+    ///     .set_region("eu-west-1");
+    /// assert_eq!(iam.region(), "eu-west-1");
+    /// ```
     pub fn set_region(mut self, region: impl ToString) -> Self {
         self.region = region.to_string();
         self

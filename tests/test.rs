@@ -213,7 +213,7 @@ fn test_live_connection() {
     let idp_host = env::var("IDP_HOST").expect("IDP_HOST env var required");
 
     let ping_provider =
-        PingCredentialsProvider::new(None::<String>, idp_host, None, user.clone(), password);
+        PingCredentialsProvider::new(None::<String>, idp_host, None, user.as_str(), password);
     let aws_credentials = ping_provider.get_credentials(preferred_role).unwrap();
 
     let (username, db_password) =

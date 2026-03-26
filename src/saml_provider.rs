@@ -13,21 +13,28 @@ use tokio::runtime::Runtime;
 
 use crate::re;
 
+/// Trait for identity providers that can supply a SAML assertion.
 pub trait SamlProvider {
+    /// user getter
     fn user(&self) -> String;
 
-    ///Get SAML assertion.
+    /// Fetches and returns a base64-encoded SAML assertion from the IdP.
     fn get_saml_assertion(&self) -> impl Future<Output = String>;
 }
 
+/// Returns `true` if the input tag has `type="password"`.
 fn is_password(inputtag: &ElementRef) -> bool {
     inputtag.attr("type") == Some("password")
 }
 
+/// Returns `true` if the input tag has `type="text"`.
 fn is_text(inputtag: &ElementRef) -> bool {
     inputtag.attr("type") == Some("text")
 }
 
+/// Finds the first form `action` attribute whose method is POST (or unspecified).
+/// Forms with an explicit non-POST method are skipped. Returns `None` if no
+/// qualifying form is found.
 fn get_form_action(soup: &Html) -> Option<&str> {
     // NOTE: selector case-insensitive; it will match both form and FORM
     let selector = Selector::parse("form").unwrap();
@@ -35,7 +42,7 @@ fn get_form_action(soup: &Html) -> Option<&str> {
     for inputtag in soup.select(&selector) {
         let action = inputtag.attr("action");
         if action.is_some() {
-            let method = inputtag.attr("form method");
+            let method = inputtag.attr("method");
             // safe unwrap
             if method.is_some() && method.unwrap().to_uppercase() != "POST" {
                 warn!("Warning: found action, but method is not POST. Skipping.");
@@ -48,6 +55,14 @@ fn get_form_action(soup: &Html) -> Option<&str> {
     None
 }
 
+/// Obtains temporary AWS credentials by exchanging a SAML assertion for STS credentials.
+///
+/// Calls [`SamlProvider::get_saml_assertion`], decodes the assertion, extracts the
+/// IAM role and principal ARNs, and calls `sts:AssumeRoleWithSAML` for `role_arn`.
+///
+/// # Panics
+/// - If no IAM roles are found in the SAML assertion.
+/// - If `role_arn` is not present among the roles in the assertion.
 pub async fn get_credentials<T: SamlProvider>(
     provider: &T,
     role_arn: String,
@@ -143,21 +158,26 @@ pub fn parse_saml_assertion(html: &str) -> String {
     assertion
 }
 
+/// PingFederate identity provider plugin for SAML-based Redshift authentication.
+///
+/// See the [Amazon Redshift IAM docs](https://docs.aws.amazon.com/redshift/latest/mgmt/options-for-providing-iam-credentials.html)
+/// for setup instructions.
 pub struct PingCredentialsProvider {
     partner_sp_id: String,
     idp_host: String,
     idp_port: u16,
     user_name: String,
     password: SecretString,
-    pub ssl_insecure: bool, // pub, so anyone can change it without setter
+    /// When `true`, TLS certificate verification is disabled. Defaults to `false`.
+    pub ssl_insecure: bool,
 }
 
-///Identity Provider Plugin providing single sign-on access to an Amazon Redshift cluster using PingOne.
 impl PingCredentialsProvider {
-    // See Amazon Redshift docs
-    // <https://docs.aws.amazon.com/redshift/latest/mgmt/options-for-providing-iam-credentials.html>_
-    // for setup instructions.
-
+    /// Creates a new `PingCredentialsProvider`.
+    ///
+    /// - `partner_sp_id`: The SP entity ID sent to PingFederate. `None` defaults to
+    ///   `"urn%3Aamazon%3Awebservices"`.
+    /// - `idp_port`: Defaults to `443` when `None`.
     pub fn new(
         partner_sp_id_option: Option<impl ToString>,
         idp_host: impl ToString,
@@ -181,15 +201,20 @@ impl PingCredentialsProvider {
         }
     }
 
+    /// user getter
     pub fn user(&self) -> String {
         self.user_name.clone()
     }
 
-    // @property
+    /// Returns `true` when TLS certificate verification is enabled (i.e. `ssl_insecure` is `false`).
     pub fn do_verify_ssl_cert(&self) -> bool {
         !self.ssl_insecure
     }
 
+    /// Synchronously retrieves temporary AWS credentials for `preferred_role`.
+    ///
+    /// Drives the full SAML -> STS flow on a new Tokio runtime. Prefer the async
+    /// [`get_credentials`] free function when already inside an async context.
     pub fn get_credentials(
         &self,
         preferred_role: impl ToString,
@@ -262,7 +287,15 @@ impl SamlProvider for PingCredentialsProvider {
         self.user()
     }
 
-    ///Get SAML assertion.
+    /// Logs in to the PingFederate IdP and returns a base64-encoded SAML assertion.
+    ///
+    /// Issues a GET to the SSO start URL, parses the login form, submits credentials,
+    /// and extracts the `SAMLResponse` value from the resulting page.
+    ///
+    /// # Panics
+    /// - If the login form cannot be parsed or credentials fields are missing.
+    /// - If the POST to the IdP returns a non-200 status.
+    /// - If no `SAMLResponse` input is found in the response.
     async fn get_saml_assertion(&self) -> String {
         // Method to grab the SAML Response. Used to refresh temporary credentials.
         debug!("PingCredentialsProvider.get_saml_assertion");
@@ -386,5 +419,56 @@ mod tests {
         <INPUT type="password" name="pf.pass2" value="" />
         </form></body></html>"#;
         scp.parse_login_form(html);
+    }
+
+    // get_form_action tests
+
+    fn _parse(html: &str) -> Html {
+        Html::parse_document(html)
+    }
+
+    #[test]
+    fn test_get_form_action_returns_action_for_post_form() {
+        let soup =
+            _parse(r#"<html><body><form action="/submit" method="POST"></form></body></html>"#);
+        assert_eq!(get_form_action(&soup), Some("/submit"));
+    }
+
+    #[test]
+    fn test_get_form_action_returns_action_when_no_method_attribute() {
+        // method is None -> the non-POST check doesn't fire -> action is returned
+        let soup = _parse(r#"<html><body><form action="/submit"></form></body></html>"#);
+        assert_eq!(get_form_action(&soup), Some("/submit"));
+    }
+
+    #[test]
+    fn test_get_form_action_skips_non_post_form() {
+        let soup =
+            _parse(r#"<html><body><form action="/submit" method="GET"></form></body></html>"#);
+        assert_eq!(get_form_action(&soup), None);
+    }
+
+    #[test]
+    fn test_get_form_action_returns_none_when_no_action() {
+        let soup = _parse(r#"<html><body><form method="POST"></form></body></html>"#);
+        assert_eq!(get_form_action(&soup), None);
+    }
+
+    #[test]
+    fn test_get_form_action_returns_none_when_no_form() {
+        let soup = _parse(r#"<html><body></body></html>"#);
+        assert_eq!(get_form_action(&soup), None);
+    }
+
+    #[test]
+    fn test_get_form_action_skips_non_post_returns_second_form_action() {
+        // First form has method=GET (skipped), second has a valid action
+        let soup = _parse(
+            r#"<html><body>
+            <form action="/bad" method="GET"></form>
+            <form action="/good" method="POST"></form>
+        </body></html>"#,
+        );
+        assert_eq!(get_form_action(&soup), Some("/good"));
     }
 }

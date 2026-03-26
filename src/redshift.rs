@@ -2,6 +2,10 @@ use arrow::record_batch::RecordBatch;
 use connectorx::errors::ConnectorXOutError;
 use secrecy::{ExposeSecret, SecretString};
 
+/// Client for executing queries against an Amazon Redshift cluster.
+///
+/// Uses [ConnectorX](https://github.com/sfu-db/connector-x) under the hood and
+/// returns results as Arrow [`RecordBatch`]es.
 pub struct Redshift {
     username: String,
     password: String,
@@ -13,6 +17,9 @@ pub struct Redshift {
 }
 
 impl Redshift {
+    /// Creates a new `Redshift` client.
+    ///
+    /// `port` defaults to `5439` when `None`.
     pub fn new(
         username: impl ToString,
         password: impl ToString,
@@ -31,6 +38,11 @@ impl Redshift {
         }
     }
 
+    /// Builds the URL-encoded `postgresql://` connection string used by ConnectorX.
+    ///
+    /// Credentials are percent-encoded so that special characters (e.g. `@`) do not
+    /// corrupt the URL. The result is wrapped in a [`SecretString`] to prevent
+    /// accidental logging.
     pub fn connection_string(&self) -> SecretString {
         if let Some(connection_string) = &self.connection_string {
             return connection_string.clone();
@@ -49,6 +61,7 @@ impl Redshift {
         SecretString::new(redshift_url.as_str().to_string().into_boxed_str())
     }
 
+    /// Executes `query` and returns the results as a `Vec<RecordBatch>`.
     pub fn execute(&self, query: impl ToString) -> Result<Vec<RecordBatch>, ConnectorXOutError> {
         // could make more flexible by letting user specify output format
         let destination = connectorx::get_arrow::get_arrow(

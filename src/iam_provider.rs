@@ -3,6 +3,8 @@ use aws_sdk_redshift as redshift;
 use aws_sdk_sts as sts;
 use tokio::runtime::Runtime;
 
+/// Exchanges temporary AWS credentials for short-lived Redshift cluster credentials
+/// via `redshift:GetClusterCredentials`.
 pub struct IamProvider {
     user: String,
     database: String,
@@ -12,6 +14,11 @@ pub struct IamProvider {
 }
 
 impl IamProvider {
+    /// Creates a new `IamProvider`.
+    ///
+    /// - `autocreate`: When `true`, the Redshift user is created automatically if it
+    ///   does not already exist.
+    /// - The AWS region defaults to `"us-east-1"`; change it with [`set_region`](Self::set_region).
     pub fn new(
         user: impl ToString,
         database: impl ToString,
@@ -31,15 +38,19 @@ impl IamProvider {
         self.user.clone()
     }
 
+    /// Overrides the AWS region used when calling `GetClusterCredentials`.
     pub fn set_region(mut self, region: impl ToString) -> Self {
         self.region = region.to_string();
         self
     }
 
+    /// Returns the configured AWS region.
     pub fn region(&self) -> String {
         self.region.clone()
     }
 
+    /// Calls `redshift:GetClusterCredentials` with the provided AWS credentials and
+    /// returns a `(username, password)` pair valid for 3600 seconds.
     pub fn auth(&self, aws_credentials: sts::types::Credentials) -> (String, String) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
@@ -58,7 +69,7 @@ impl IamProvider {
                 .set_db_user(Some(self.user()))
                 .set_db_name(Some(self.database.clone()))
                 .set_cluster_identifier(Some(self.cluster.clone()))
-                .set_duration_seconds(Some(3600))
+                .set_duration_seconds(Some(3600))  // can be 900-3600
                 .set_auto_create(Some(self.autocreate))
                 .send()
                 .await

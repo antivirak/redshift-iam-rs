@@ -1,6 +1,8 @@
 // inspired by github.com/aws/amazon-redshift-python-driver
 // provides saml and IAM temp credential login
 
+#![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
+
 #[doc(hidden)]
 pub mod iam_provider;
 #[doc(hidden)]

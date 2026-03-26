@@ -1,7 +1,7 @@
 use std::env;
 
 use base64::prelude::*;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
 use redshift_iam::prelude::*;
 use redshift_iam::saml_provider::{SamlProvider, get_credentials};
@@ -25,6 +25,19 @@ fn test_default_parameters_saml_credentials_provider() {
     let scp = make_valid_ping_credentials_provider();
     assert!(!scp.ssl_insecure);
     assert!(scp.do_verify_ssl_cert());
+}
+
+#[test]
+fn test_ping_ssl_insecure_disables_verify() {
+    let mut scp = make_valid_ping_credentials_provider();
+    scp.ssl_insecure = true;
+    assert!(!scp.do_verify_ssl_cert());
+}
+
+#[test]
+fn test_ping_user_getter() {
+    let scp = make_valid_ping_credentials_provider();
+    assert_eq!(scp.user(), "user");
 }
 
 // get_credentials error-path tests
@@ -75,6 +88,74 @@ async fn test_refresh_saml_assertion_missing_role_should_fail() {
         "arn:aws:iam::123:role/my-role".to_string(),
     )
     .await;
+}
+
+// IamProvider tests
+
+#[test]
+fn test_iam_provider_default_region() {
+    let iam = IamProvider::new("user", "db", "cluster", false);
+    assert_eq!(iam.region(), "us-east-1");
+}
+
+#[test]
+fn test_iam_provider_set_region_overrides_default() {
+    let iam = IamProvider::new("user", "db", "cluster", true).set_region("ap-southeast-1");
+    assert_ne!(iam.region(), "us-east-1");
+    assert_eq!(iam.region(), "ap-southeast-1");
+}
+
+// Redshift tests
+
+#[test]
+fn test_redshift_connection_string_postgresql_scheme() {
+    let r = Redshift::new("user", "pass", "host", None, "db");
+    assert!(
+        r.connection_string()
+            .expose_secret()
+            .starts_with("postgresql://")
+    );
+}
+
+#[test]
+fn test_redshift_connection_string_default_port() {
+    let r = Redshift::new("user", "pass", "my-host", None, "mydb");
+    assert!(r.connection_string().expose_secret().contains(":5439/"));
+}
+
+#[test]
+fn test_redshift_connection_string_custom_port() {
+    let r = Redshift::new("user", "pass", "my-host", Some(5440), "mydb");
+    let cs = r.connection_string();
+    assert!(cs.expose_secret().contains(":5440/"));
+    assert!(!cs.expose_secret().contains(":5439/"));
+}
+
+#[test]
+fn test_redshift_connection_string_contains_host_and_database() {
+    let r = Redshift::new("user", "pass", "my-host.example.com", None, "analytics");
+    let cs = r.connection_string();
+    assert!(cs.expose_secret().contains("my-host.example.com"));
+    assert!(cs.expose_secret().contains("/analytics"));
+}
+
+#[test]
+fn test_redshift_connection_string_url_encodes_credentials() {
+    // '@' in a password must be percent-encoded so the URL remains valid
+    let r = Redshift::new("user", "p@ssword", "host", None, "db");
+    let cs = r.connection_string();
+    assert!(!cs.expose_secret().contains(":p@ssword@"));
+    assert!(cs.expose_secret().contains("p%40ssword"));
+}
+
+#[test]
+fn test_redshift_connection_string_includes_cxprotocol() {
+    let r = Redshift::new("user", "pass", "host", None, "db");
+    assert!(
+        r.connection_string()
+            .expose_secret()
+            .contains("cxprotocol=cursor")
+    );
 }
 
 // Live integration test

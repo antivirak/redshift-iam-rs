@@ -135,12 +135,13 @@ pub async fn get_credentials<T: SamlProvider>(
     response.credentials
 }
 
+
 /// Extracts the SAMLResponse assertion value from the IdP authentication response HTML.
 /// Panics if no `SAMLResponse` input tag is found.
 ///
 /// # Examples
-/// ```
-/// use redshift_iam::saml_provider::parse_saml_assertion;
+/// ```rust,ignore
+/// use crate::saml_provider::parse_saml_assertion;
 ///
 /// let html = r#"<html><body>
 /// <form method="POST" action="https://signin.aws.amazon.com/saml">
@@ -149,7 +150,7 @@ pub async fn get_credentials<T: SamlProvider>(
 /// </body></html>"#;
 /// assert_eq!(parse_saml_assertion(html), "dGVzdA==");
 /// ```
-pub fn parse_saml_assertion(html: &str) -> String {
+fn parse_saml_assertion(html: &str) -> String {
     let soup = Html::parse_document(html);
     let selector = Selector::parse("INPUT").unwrap();
     let mut assertion = String::new();
@@ -392,6 +393,12 @@ mod tests {
             "user",
             SecretString::new("pwd".to_string().into_boxed_str()),
         )
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to retrieve SAMLAssertion")]
+    fn test_parse_saml_assertion_missing_panics() {
+        parse_saml_assertion("<html><body><form></form></body></html>");
     }
 
     // parse_login_form tests

@@ -4,7 +4,7 @@ use base64::prelude::*;
 use secrecy::{ExposeSecret, SecretString};
 
 use redshift_iam::prelude::*;
-use redshift_iam::saml_provider::{SamlProvider, get_credentials, parse_saml_assertion};
+use redshift_iam::saml_provider::{SamlProvider, get_credentials};
 
 // helpers
 
@@ -25,12 +25,6 @@ fn test_ping_ssl_insecure_disables_verify() {
     let mut scp = make_valid_ping_credentials_provider();
     scp.ssl_insecure = true;
     assert!(!scp.do_verify_ssl_cert());
-}
-
-#[test]
-#[should_panic(expected = "Failed to retrieve SAMLAssertion")]
-fn test_parse_saml_assertion_missing_panics() {
-    parse_saml_assertion("<html><body><form></form></body></html>");
 }
 
 // get_credentials error-path tests

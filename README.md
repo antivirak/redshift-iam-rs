@@ -13,7 +13,7 @@ The authentication flow has three stages:
 
 ## Usage
 
-```rust
+```rust,no_run
 use secrecy::SecretString;
 use redshift_iam::prelude::*;
 
@@ -52,7 +52,7 @@ let batches = conn.execute("SELECT * FROM my_table LIMIT 10").unwrap();
 
 Authenticates against a PingFederate IdP and retrieves temporary AWS credentials via SAML.
 
-```rust
+```rust,ignore
 PingCredentialsProvider::new(
     partner_sp_id: Option<impl ToString>,  // None -> "urn%3Aamazon%3Awebservices"
     idp_host: impl ToString,
@@ -73,7 +73,7 @@ PingCredentialsProvider::new(
 
 Exchanges temporary AWS credentials for Redshift cluster credentials.
 
-```rust
+```rust,ignore
 IamProvider::new(user, database, cluster, autocreate) -> Self
 ```
 
@@ -87,7 +87,7 @@ IamProvider::new(user, database, cluster, autocreate) -> Self
 
 Executes SQL queries against a Redshift cluster, returning Arrow `RecordBatch`es.
 
-```rust
+```rust,ignore
 Redshift::new(username, password, host, port: Option<u16>, database) -> Self
 ```
 
@@ -103,8 +103,8 @@ Port defaults to `5439` if `None` is passed.
 You are not limited to PingFederate. Any type that implements the `SamlProvider` trait can be
 passed directly to the async `get_credentials` free function:
 
-```rust
-use redshift_iam::saml_provider::{SamlProvider, get_credentials};
+```rust,ignore
+use redshift_iam::{SamlProvider, get_credentials};
 
 struct MyIdpProvider { /* ... */ }
 

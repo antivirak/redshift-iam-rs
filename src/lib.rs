@@ -11,8 +11,8 @@ use arrow::record_batch::RecordBatch;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_sdk_sts as sts;
 use connectorx::errors::ConnectorXOutError;
-use log::debug;
-use secrecy::SecretString;
+use log::{debug, error};
+use secrecy::{ExposeSecret, SecretString};
 use tokio::runtime::Runtime;
 
 #[doc(hidden)]
@@ -181,48 +181,14 @@ pub fn register_provider(
     registry().lock().unwrap().insert(plugin, Arc::new(factory));
 }
 
-/// Executes `query` against a Redshift cluster described by a JDBC-style IAM connection URI
-/// and returns the results as Arrow [`RecordBatch`]es.
-///
-/// # URI format
-///
-/// ```text
-/// [jdbc:]redshift:iam://<user>:<password>@<host>:<port>/<database>?<params>
-/// ```
-///
-/// The `jdbc:` prefix is optional and stripped automatically. Supported query parameters
-/// (all case-insensitive):
-///
-/// | Parameter | Description |
-/// |---|---|
-/// | `ClusterID` | Redshift cluster identifier (required for IAM auth) |
-/// | `Region` | AWS region (default: `us-east-1`) |
-/// | `AutoCreate` | `true` to auto-create the DB user |
-/// | `IdP_Host` | IdP hostname. If absent, falls back to ambient AWS credentials |
-/// | `IdP_Port` | IdP port (default: `443`) |
-/// | `Plugin_Name` | SAML provider variant (e.g. `PingCredentialsProvider`). Maps to [`PluginName`]. |
-/// | `Preferred_Role` | IAM role ARN to assume via SAML |
-///
-/// When `IdP_Host` and a password are present the `Plugin_Name` parameter is
-/// parsed into a [`PluginName`] variant and looked up in the global registry.
-/// [`PluginName::PingCredentialsProvider`] is pre-registered. All other variants
-/// must be registered first via [`register_provider`].
-///
-/// # Errors
-///
-/// Returns [`ConnectorXOutError::SourceNotSupport`] if the URI does not start with
-/// `redshift:iam://`.
-pub fn read_sql(
-    query: &str,
-    connection_uri: impl ToString,
-) -> Result<Vec<RecordBatch>, ConnectorXOutError> {
+fn get_redshift_from_uri(connection_uri: impl ToString) -> Result<Redshift, ConnectorXOutError> {
     let uri_string = connection_uri.to_string();
     let mut uri_str = uri_string.trim();
 
+    let pattern = "redshift:iam://";
     let (scheme, tail) = match uri_str.split_once(':') {
         Some((scheme, tail)) => (scheme, tail),
         None => {
-            let pattern = "redshift:iam://";
             return Err(ConnectorXOutError::SourceNotSupport(format!(
                 "The connection uri needs to start with {pattern}"
             )));
@@ -231,8 +197,7 @@ pub fn read_sql(
     if scheme == "jdbc" {
         uri_str = tail;
     }
-    let pattern = "redshift:iam://";
-    if !uri_str.starts_with(pattern) {
+    if !uri_str.starts_with(pattern) && !uri_str.starts_with("redshift-iam://") {
         return Err(ConnectorXOutError::SourceNotSupport(format!(
             "The connection uri needs to start with {pattern}"
         )));
@@ -308,14 +273,95 @@ pub fn read_sql(
     }
     let (username, password) = iam_provider.auth(aws_credentials);
 
-    Redshift::new(
+    Ok(Redshift::new(
         username,
         password,
         redshift_url.host_str().unwrap(),
         redshift_url.port(),
         database,
-    )
-    .execute(query)
+    ))
+}
+
+/// Executes `query` against a Redshift cluster described by a JDBC-style IAM connection URI
+/// and returns the results as Arrow [`RecordBatch`]es.
+///
+/// # URI format
+///
+/// ```text
+/// [jdbc:]redshift:iam://<user>:<password>@<host>:<port>/<database>?<params>
+/// ```
+///
+/// The `jdbc:` prefix is optional and stripped automatically. Supported query parameters
+/// (all case-insensitive):
+///
+/// | Parameter | Description |
+/// |---|---|
+/// | `ClusterID` | Redshift cluster identifier (required for IAM auth) |
+/// | `Region` | AWS region (default: `us-east-1`) |
+/// | `AutoCreate` | `true` to auto-create the DB user |
+/// | `IdP_Host` | IdP hostname. If absent, falls back to ambient AWS credentials |
+/// | `IdP_Port` | IdP port (default: `443`) |
+/// | `Plugin_Name` | SAML provider variant (e.g. `PingCredentialsProvider`). Maps to [`PluginName`]. |
+/// | `Preferred_Role` | IAM role ARN to assume via SAML |
+///
+/// When `IdP_Host` and a password are present the `Plugin_Name` parameter is
+/// parsed into a [`PluginName`] variant and looked up in the global registry.
+/// [`PluginName::PingCredentialsProvider`] is pre-registered. All other variants
+/// must be registered first via [`register_provider`].
+///
+/// # Errors
+///
+/// Returns [`ConnectorXOutError::SourceNotSupport`] if the URI does not start with
+/// `redshift:iam://`.
+pub fn read_sql(
+    query: &str,
+    connection_uri: impl ToString,
+) -> Result<Vec<RecordBatch>, ConnectorXOutError> {
+    let redshift = get_redshift_from_uri(connection_uri).unwrap();
+    redshift.execute(query)
+}
+
+/// Converts a Redshift IAM connection URI into a parsed PostgreSQL connection string
+/// with temporary credentials already embedded.
+///
+/// Parses `connection_uri`, performs the full IAM / SAML authentication flow (identical
+/// to [`read_sql`]), and returns the resulting `postgres://` URL with the short-lived
+/// username and password substituted in.
+///
+/// This is useful when you need to hand a live connection string to a third-party
+/// library that speaks the PostgreSQL wire protocol directly (e.g. `sqlx`, `diesel`,
+/// `psycopg2` via a subprocess) without going through `connectorx`.
+///
+/// # URI format
+///
+/// Accepts the same `[jdbc:]redshift:iam://…` format described in [`read_sql`].
+///
+/// # Fallback behaviour
+///
+/// If the IAM / SAML exchange fails, the error is logged at the `error` level and the
+/// function falls back to returning the original URI with its scheme replaced by
+/// `postgres`. This allows callers to still attempt a direct connection using
+/// whatever credentials were present in the URI.
+///
+/// # Returns
+///
+/// A `postgres://username:password@host:port/database` connection string as an
+/// Url instance. The password is a short-lived STS session token and should
+/// not be cached beyond its expiry window.
+pub fn redshift_to_postgres(connection_uri: impl ToString) -> reqwest::Url {
+    let redshift_res = get_redshift_from_uri(connection_uri.to_string());
+    if let Ok(redshift) = redshift_res {
+        // already parsed before, safe to unwrap
+        reqwest::Url::parse(redshift.connection_string().expose_secret()).unwrap()
+    } else {
+        error!(
+            "Logging to redshift using redshift-iam crate failed with: {:?}",
+            redshift_res.err()
+        );
+        let mut uri = reqwest::Url::parse(&connection_uri.to_string()).unwrap(); // we need to return Url; if not parsable, just panic
+        uri.set_scheme("postgres").unwrap(); // postgres is valid scheme, no reason for panic
+        uri
+    }
 }
 
 /// Obtains temporary AWS credentials from any [`SamlProvider`] synchronously.

@@ -56,6 +56,8 @@
   }
   ```
 
+- **`parse_saml_assertion` made private.** Even though the "Active Directory Federation Services" provider will use similar function to parse SAML response; the other ones will use very different ones. It makes little sense to keep the function public, when it can be used with Ping only.
+
 - **`get_credentials` uses dynamic dispatch.** The signature changed from
   `get_credentials<T: SamlProvider>(provider: &T, …)` to
   `get_credentials(provider: &dyn SamlProvider, …)`.

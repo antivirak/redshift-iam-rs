@@ -22,7 +22,7 @@ let password = SecretString::new("my-password".to_string().into_boxed_str());
 
 // 1. Obtain a SAML assertion from PingFederate and exchange it for AWS credentials
 let ping_provider = PingCredentialsProvider::new(
-    &HashMap::new(),         // optionally containing partnerspid key (None = default "urn:amazon:webservices")
+    &HashMap::new(),         // optionally containing partnerspid key (empty map = default "urn:amazon:webservices")
     "pingfed.example.com",   // IdP host
     None,                    // IdP port (None = 443)
     "alice@example.com",     // username

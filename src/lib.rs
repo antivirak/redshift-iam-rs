@@ -181,6 +181,7 @@ pub fn register_provider(
     registry().lock().unwrap().insert(plugin, Arc::new(factory));
 }
 
+/// Uses the main functionality from the crate modules to convert connection URI to Redshift type.
 fn get_redshift_from_uri(connection_uri: impl ToString) -> Result<Redshift, ConnectorXOutError> {
     let uri_string = connection_uri.to_string();
     let mut uri_str = uri_string.trim();

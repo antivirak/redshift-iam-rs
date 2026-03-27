@@ -99,8 +99,17 @@ impl From<&str> for PluginName {
 }
 
 /// Type-erased factory function stored in the provider registry.
-type ProviderFactory =
-    Arc<dyn Fn(&str, Option<u16>, &str, SecretString) -> Box<dyn SamlProvider> + Send + Sync>;
+type ProviderFactory = Arc<
+    dyn Fn(
+            &HashMap<String, Cow<str>>,
+            &str,
+            Option<u16>,
+            &str,
+            SecretString,
+        ) -> Box<dyn SamlProvider>
+        + Send
+        + Sync,
+>;
 
 static PROVIDER_REGISTRY: OnceLock<Mutex<HashMap<PluginName, ProviderFactory>>> = OnceLock::new();
 
@@ -111,9 +120,9 @@ fn registry() -> &'static Mutex<HashMap<PluginName, ProviderFactory>> {
         let mut map: HashMap<PluginName, ProviderFactory> = HashMap::new();
         map.insert(
             PluginName::PingCredentialsProvider,
-            Arc::new(|host, port, user, pwd| {
+            Arc::new(|conn_params, host, port, user, pwd| {
                 Box::new(PingCredentialsProvider::new(
-                    None::<String>,
+                    conn_params,
                     host,
                     port,
                     user,
@@ -127,9 +136,14 @@ fn registry() -> &'static Mutex<HashMap<PluginName, ProviderFactory>> {
 
 /// Registers a factory for the given [`PluginName`] variant.
 ///
-/// The factory receives `(idp_host, idp_port, username, password)` and must
+/// The factory receives `(conn_parameters, idp_host, idp_port, username, password)` and must
 /// return a `Box<dyn SamlProvider>`. Call this once at application startup
 /// before invoking [`read_sql`].
+///
+/// conn_parameters is a map of provider-specific arguments, like PartnerSpId for Ping,
+/// app_id - Used only with Okta. https://example.okta.com/home/amazon_aws/0oa2hylwrpM8UGehd1t7/272
+/// idp_tenant - A tenant used for Azure AD. Used only with Azure.
+/// client_id - A client ID for the Amazon Redshift enterprise application in Azure AD. Used only with Azure.
 ///
 /// [`PluginName::PingCredentialsProvider`] is pre-registered and maps to
 /// [`PingCredentialsProvider`]. Registering it again replaces the built-in.
@@ -147,13 +161,19 @@ fn registry() -> &'static Mutex<HashMap<PluginName, ProviderFactory>> {
 ///     async fn get_saml_assertion(&self) -> String { todo!() }
 /// }
 ///
-/// register_provider(PluginName::OktaCredentialsProvider, |_host, _port, _user, _pwd| {
+/// register_provider(PluginName::OktaCredentialsProvider, |_conn_params, _host, _port, _user, _pwd| {
 ///     Box::new(MyOktaProvider)
 /// });
 /// ```
 pub fn register_provider(
     plugin: PluginName,
-    factory: impl Fn(&str, Option<u16>, &str, SecretString) -> Box<dyn SamlProvider>
+    factory: impl Fn(
+        &HashMap<String, Cow<str>>,
+        &str,
+        Option<u16>,
+        &str,
+        SecretString,
+    ) -> Box<dyn SamlProvider>
     + Send
     + Sync
     + 'static,
@@ -199,7 +219,15 @@ pub fn read_sql(
     let uri_string = connection_uri.to_string();
     let mut uri_str = uri_string.trim();
 
-    let (scheme, tail) = uri_str.split_once(":").unwrap();
+    let (scheme, tail) = match uri_str.split_once(':') {
+        Some((scheme, tail)) => (scheme, tail),
+        None => {
+            let pattern = "redshift:iam://";
+            return Err(ConnectorXOutError::SourceNotSupport(format!(
+                "The connection uri needs to start with {pattern}"
+            )));
+        }
+    };
     if scheme == "jdbc" {
         uri_str = tail;
     }
@@ -211,7 +239,9 @@ pub fn read_sql(
     }
     uri_str = uri_str.split_once("://").unwrap().1;
     let uri_str = format!("redshift://{uri_str}");
-    let redshift_url = reqwest::Url::parse(&uri_str).unwrap();
+    let redshift_url = reqwest::Url::parse(&uri_str).map_err(|e| {
+        ConnectorXOutError::SourceNotSupport(format!("Invalid Redshift IAM URI: {e}"))
+    })?;
     let database = redshift_url.path().trim_start_matches("/");
 
     let params: HashMap<String, Cow<str>> = HashMap::from_iter(
@@ -263,6 +293,7 @@ pub fn read_sql(
                 )
             });
         let provider = factory(
+            &params,
             idp_host,
             idp_port,
             redshift_url.username(),

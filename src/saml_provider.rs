@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str;
 
@@ -188,17 +189,18 @@ pub struct PingCredentialsProvider {
 impl PingCredentialsProvider {
     /// Creates a new `PingCredentialsProvider`.
     ///
-    /// - `partner_sp_id`: The SP entity ID sent to PingFederate. `None` defaults to
-    ///   `"urn%3Aamazon%3Awebservices"`.
+    /// - `conn_parameters`: `HashMap` that may contain a `partnerspid` key: the SP entity ID sent to PingFederate.
+    ///   If the map is empty or does not contain `partnerspid`, `"urn%3Aamazon%3Awebservices"` is used.
     /// - `idp_port`: Defaults to `443` when `None`.
     ///
     /// # Examples
     /// ```
+    /// use std::collections::HashMap;
     /// use secrecy::SecretString;
     /// use redshift_iam::PingCredentialsProvider;
     ///
     /// let scp = PingCredentialsProvider::new(
-    ///     None::<String>,
+    ///     &HashMap::new(),
     ///     "pingfed.example.com",
     ///     None,
     ///     "alice",
@@ -209,13 +211,14 @@ impl PingCredentialsProvider {
     /// assert_eq!(scp.user(), "alice");
     /// ```
     pub fn new(
-        partner_sp_id_option: Option<impl ToString>,
+        conn_parameters: &HashMap<String, Cow<str>>,
         idp_host: impl ToString,
         idp_port: Option<u16>,
         user_name: impl ToString,
         password: SecretString,
     ) -> Self {
         // We could either accept pwd and create secretString here or force user to pass it
+        let partner_sp_id_option = conn_parameters.get("partnerspid");
         let partner_sp_id = if let Some(partner_sp_id) = partner_sp_id_option {
             partner_sp_id.to_string()
         } else {
@@ -390,7 +393,7 @@ mod tests {
 
     fn _make_valid_ping_credentials_provider() -> PingCredentialsProvider {
         PingCredentialsProvider::new(
-            None::<String>,
+            &HashMap::new(),
             "example.example.com",
             None,
             "user",

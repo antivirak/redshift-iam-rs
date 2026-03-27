@@ -14,6 +14,7 @@ The authentication flow has three stages:
 ## Usage
 
 ```rust,no_run
+use std::collections::HashMap;
 use secrecy::SecretString;
 use redshift_iam::prelude::*;
 
@@ -21,7 +22,7 @@ let password = SecretString::new("my-password".to_string().into_boxed_str());
 
 // 1. Obtain a SAML assertion from PingFederate and exchange it for AWS credentials
 let ping_provider = PingCredentialsProvider::new(
-    None::<String>,          // partner_sp_id (None = default "urn:amazon:webservices")
+    &HashMap::new(),         // optionally containing partnerspid key (None = default "urn:amazon:webservices")
     "pingfed.example.com",   // IdP host
     None,                    // IdP port (None = 443)
     "alice@example.com",     // username

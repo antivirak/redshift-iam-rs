@@ -5,6 +5,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use arrow::record_batch::RecordBatch;
 use aws_credential_types::provider::ProvideCredentials;
@@ -41,6 +42,125 @@ pub mod prelude {
     pub use crate::saml_provider::PingCredentialsProvider;
 }
 
+/// Identifies the SAML provider plugin to use when an IdP host is present in the
+/// connection URI.
+///
+/// The `Plugin_Name` query parameter in the JDBC URI is parsed into one of these
+/// variants. The optional `com.amazon.redshift.plugin.` prefix is stripped
+/// automatically, so both `"PingCredentialsProvider"` and
+/// `"com.amazon.redshift.plugin.PingCredentialsProvider"` resolve to
+/// [`PluginName::PingCredentialsProvider`].
+///
+/// Only [`PluginName::PingCredentialsProvider`] has a built-in factory.
+/// All other variants require a factory to be registered via [`register_provider`]
+/// before calling [`read_sql`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PluginName {
+    /// PingFederate IdP (built-in — backed by [`PingCredentialsProvider`]).
+    PingCredentialsProvider,
+    /// Okta IdP.
+    OktaCredentialsProvider,
+    /// Browser-based SAML flow.
+    BrowserSamlCredentialsProvider,
+    /// Browser-based Azure AD SAML flow.
+    BrowserAzureCredentialsProvider,
+    /// Azure AD IdP.
+    AzureCredentialsProvider,
+    /// ADFS IdP.
+    AdfsCredentialsProvider,
+    /// User-defined custom provider.
+    CustomCredentialsProvider,
+    /// Fallback for unrecognised `Plugin_Name` values.
+    UnknownCredentialsProvider,
+}
+
+impl From<&str> for PluginName {
+    /// Converts a `Plugin_Name` URI parameter value to a `PluginName` variant.
+    ///
+    /// The optional `com.amazon.redshift.plugin.` package prefix is stripped
+    /// before matching. Comparison is case-insensitive. Unrecognised strings
+    /// map to [`PluginName::UnknownCredentialsProvider`].
+    fn from(s: &str) -> Self {
+        let name = s
+            .trim()
+            .trim_start_matches("com.amazon.redshift.plugin.")
+            .to_lowercase();
+        match name.as_str() {
+            "pingcredentialsprovider" => Self::PingCredentialsProvider,
+            "oktacredentialsprovider" => Self::OktaCredentialsProvider,
+            "browsersamlcredentialsprovider" => Self::BrowserSamlCredentialsProvider,
+            "browserazurecredentialsprovider" => Self::BrowserAzureCredentialsProvider,
+            "azurecredentialsprovider" => Self::AzureCredentialsProvider,
+            "adfscredentialsprovider" => Self::AdfsCredentialsProvider,
+            "customcredentialsprovider" => Self::CustomCredentialsProvider,
+            _ => Self::UnknownCredentialsProvider,
+        }
+    }
+}
+
+/// Type-erased factory function stored in the provider registry.
+type ProviderFactory =
+    Arc<dyn Fn(&str, Option<u16>, &str, SecretString) -> Box<dyn SamlProvider> + Send + Sync>;
+
+static PROVIDER_REGISTRY: OnceLock<Mutex<HashMap<PluginName, ProviderFactory>>> = OnceLock::new();
+
+/// Returns the global provider registry, pre-populated with the built-in
+/// [`PluginName::PingCredentialsProvider`] -> [`PingCredentialsProvider`] mapping.
+fn registry() -> &'static Mutex<HashMap<PluginName, ProviderFactory>> {
+    PROVIDER_REGISTRY.get_or_init(|| {
+        let mut map: HashMap<PluginName, ProviderFactory> = HashMap::new();
+        map.insert(
+            PluginName::PingCredentialsProvider,
+            Arc::new(|host, port, user, pwd| {
+                Box::new(PingCredentialsProvider::new(
+                    None::<String>,
+                    host,
+                    port,
+                    user,
+                    pwd,
+                ))
+            }),
+        );
+        Mutex::new(map)
+    })
+}
+
+/// Registers a factory for the given [`PluginName`] variant.
+///
+/// The factory receives `(idp_host, idp_port, username, password)` and must
+/// return a `Box<dyn SamlProvider>`. Call this once at application startup
+/// before invoking [`read_sql`].
+///
+/// [`PluginName::PingCredentialsProvider`] is pre-registered and maps to
+/// [`PingCredentialsProvider`]. Registering it again replaces the built-in.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use secrecy::SecretString;
+/// use redshift_iam::{register_provider, PluginName, SamlProvider};
+///
+/// struct MyOktaProvider;
+///
+/// #[async_trait::async_trait]
+/// impl SamlProvider for MyOktaProvider {
+///     async fn get_saml_assertion(&self) -> String { todo!() }
+/// }
+///
+/// register_provider(PluginName::OktaCredentialsProvider, |_host, _port, _user, _pwd| {
+///     Box::new(MyOktaProvider)
+/// });
+/// ```
+pub fn register_provider(
+    plugin: PluginName,
+    factory: impl Fn(&str, Option<u16>, &str, SecretString) -> Box<dyn SamlProvider>
+    + Send
+    + Sync
+    + 'static,
+) {
+    registry().lock().unwrap().insert(plugin, Arc::new(factory));
+}
+
 /// Executes `query` against a Redshift cluster described by a JDBC-style IAM connection URI
 /// and returns the results as Arrow [`RecordBatch`]es.
 ///
@@ -58,24 +178,23 @@ pub mod prelude {
 /// | `ClusterID` | Redshift cluster identifier (required for IAM auth) |
 /// | `Region` | AWS region (default: `us-east-1`) |
 /// | `AutoCreate` | `true` to auto-create the DB user |
-/// | `IdP_Host` | PingFederate hostname. If absent, falls back to ambient AWS credentials |
-/// | `IdP_Port` | PingFederate port (default: `443`) |
+/// | `IdP_Host` | IdP hostname. If absent, falls back to ambient AWS credentials |
+/// | `IdP_Port` | IdP port (default: `443`) |
+/// | `Plugin_Name` | SAML provider variant (e.g. `PingCredentialsProvider`). Maps to [`PluginName`]. |
 /// | `Preferred_Role` | IAM role ARN to assume via SAML |
 ///
-/// The `provider_factory` closure receives `(idp_host, idp_port, username, password)` and
-/// returns any type implementing [`SamlProvider`]. The closure is **not called** when
-/// `IdP_Host` or password are absent from the URI — ambient AWS credentials are used instead.
-/// The concrete type returned by the closure determines which IdP implementation is used,
-/// replacing the old `Plugin_Name` string-based dispatch.
+/// When `IdP_Host` and a password are present the `Plugin_Name` parameter is
+/// parsed into a [`PluginName`] variant and looked up in the global registry.
+/// [`PluginName::PingCredentialsProvider`] is pre-registered. All other variants
+/// must be registered first via [`register_provider`].
 ///
 /// # Errors
 ///
 /// Returns [`ConnectorXOutError::SourceNotSupport`] if the URI does not start with
 /// `redshift:iam://`.
-pub fn read_sql<T: SamlProvider>(
+pub fn read_sql(
     query: &str,
     connection_uri: impl ToString,
-    provider_factory: impl FnOnce(&str, Option<u16>, &str, SecretString) -> T,
 ) -> Result<Vec<RecordBatch>, ConnectorXOutError> {
     let uri_string = connection_uri.to_string();
     let mut uri_str = uri_string.trim();
@@ -131,7 +250,19 @@ pub fn read_sql<T: SamlProvider>(
             .build()
             .unwrap()
     } else {
-        let provider = provider_factory(
+        let plugin_name = PluginName::from(params.get("plugin_name").map_or("", |v| v.as_ref()));
+        let factory = registry()
+            .lock()
+            .unwrap()
+            .get(&plugin_name)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "No SAML provider registered for {plugin_name:?}. \
+                    Register one with register_provider() before calling read_sql."
+                )
+            });
+        let provider = factory(
             idp_host,
             idp_port,
             redshift_url.username(),
@@ -159,14 +290,13 @@ pub fn read_sql<T: SamlProvider>(
 /// Obtains temporary AWS credentials from any [`SamlProvider`] synchronously.
 ///
 /// Drives the async [`saml_provider::get_credentials`] on a new Tokio runtime.
-/// Separated from [`read_sql`] so the generic bound is isolated to this function.
-fn aws_creds_from_saml<T: SamlProvider>(
-    provider: T,
+fn aws_creds_from_saml(
+    provider: Box<dyn SamlProvider>,
     preferred_role: &str,
 ) -> sts::types::Credentials {
     let rt = Runtime::new().unwrap();
     rt.block_on(crate::saml_provider::get_credentials(
-        &provider,
+        provider.as_ref(),
         preferred_role.to_string(),
     ))
     .unwrap()

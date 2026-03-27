@@ -11,6 +11,7 @@ keywords = ["redshift", "saml", "iam", "authentication", "sso"]
 categories = ["authentication", "database"]
 
 [dependencies]
+async-trait = "0.1"
 anyhow = {
     version = "1",
     features = ["backtrace"],

@@ -32,6 +32,7 @@ fn test_ping_ssl_insecure_disables_verify() {
 
 struct FailingSamlProvider;
 
+#[async_trait::async_trait]
 impl SamlProvider for FailingSamlProvider {
     async fn get_saml_assertion(&self) -> String {
         panic!("get_saml_assertion failed")
@@ -52,6 +53,7 @@ async fn test_get_saml_assertion_fails_propagates() {
 
 struct NoRoleSamlProvider;
 
+#[async_trait::async_trait]
 impl SamlProvider for NoRoleSamlProvider {
     async fn get_saml_assertion(&self) -> String {
         // A valid base64-encoded XML document that contains no IAM role ARNs.

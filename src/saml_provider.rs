@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::str;
 
 // use aws_config;
@@ -14,9 +13,13 @@ use tokio::runtime::Runtime;
 use crate::re;
 
 /// Trait for identity providers that can supply a SAML assertion.
-pub trait SamlProvider {
+///
+/// Implement this trait with `#[async_trait::async_trait]` to create a custom IdP plugin,
+/// then register it via [`crate::register_provider`].
+#[async_trait::async_trait]
+pub trait SamlProvider: Send + Sync {
     /// Fetches and returns a base64-encoded SAML assertion from the IdP.
-    fn get_saml_assertion(&self) -> impl Future<Output = String>;
+    async fn get_saml_assertion(&self) -> String;
 }
 
 /// Returns `true` if the input tag has `type="password"`.
@@ -60,8 +63,8 @@ fn get_form_action(soup: &Html) -> Option<&str> {
 /// # Panics
 /// - If no IAM roles are found in the SAML assertion.
 /// - If `role_arn` is not present among the roles in the assertion.
-pub async fn get_credentials<T: SamlProvider>(
-    provider: &T,
+pub async fn get_credentials(
+    provider: &dyn SamlProvider,
     role_arn: String,
 ) -> Option<sts::types::Credentials> {
     // refresh method alias
@@ -134,7 +137,6 @@ pub async fn get_credentials<T: SamlProvider>(
 
     response.credentials
 }
-
 
 /// Extracts the SAMLResponse assertion value from the IdP authentication response HTML.
 /// Panics if no `SAMLResponse` input tag is found.
@@ -310,6 +312,7 @@ impl PingCredentialsProvider {
     }
 }
 
+#[async_trait::async_trait]
 impl SamlProvider for PingCredentialsProvider {
     /// Logs in to the PingFederate IdP and returns a base64-encoded SAML assertion.
     ///

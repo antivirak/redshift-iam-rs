@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1]
+
+### Bugfix
+- README file had wrong first argument to PingCredentialsProvider constructor.
+
 ## [0.2.0]
 
 ### ⚠ Breaking Changes

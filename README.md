@@ -55,7 +55,7 @@ Authenticates against a PingFederate IdP and retrieves temporary AWS credentials
 
 ```rust,ignore
 PingCredentialsProvider::new(
-    partner_sp_id: Option<impl ToString>,  // None -> "urn%3Aamazon%3Awebservices"
+    partner_sp_id: &HashMap::new(),  // empty map -> "urn%3Aamazon%3Awebservices"
     idp_host: impl ToString,
     idp_port: Option<u16>,                 // None -> 443
     user_name: impl ToString,

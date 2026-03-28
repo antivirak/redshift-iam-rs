@@ -11,6 +11,8 @@ The authentication flow has three stages:
 3. **Redshift credentials** — The temporary AWS credentials are used to call `GetClusterCredentials`, obtaining a short-lived Redshift username/password.
 4. **Query** — `Redshift` connects using those credentials and executes queries, returning Arrow `RecordBatch`es.
 
+The query execution is only enabled if you include read_sql feature. Otherwise, you can get the connection_string and execute queries via other crates.
+
 ## Usage
 
 ```rust,no_run
@@ -44,6 +46,7 @@ let (username, db_password) = IamProvider::new(
 
 // 3. Connect and query
 let conn = Redshift::new(username, db_password, "my-cluster.example.com", None, "analytics");
+#[cfg(feature = "read_sql")]
 let batches = conn.execute("SELECT * FROM my_table LIMIT 10").unwrap();
 ```
 

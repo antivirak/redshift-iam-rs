@@ -1,6 +1,6 @@
 [package]
 name = "redshift-iam"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "SAML/IAM authentication for Amazon Redshift via PingFederate or AWS STS"
 authors = ["Jaroslav Cerman"]
@@ -16,22 +16,29 @@ anyhow = {
     version = "1",
     features = ["backtrace"],
 }
-arrow = "54.3"
+arrow = { version = "54.3", optional = true }
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2", features = ["hardcoded-credentials"] }
-aws-sdk-redshift = { version = "1.101", features = ["behavior-version-latest"] }
-aws-sdk-sts = "1.101"
+aws-sdk-redshift = { version = "1.74", features = ["behavior-version-latest"] }
+aws-sdk-sts = "1.74"
 base64 = "0.22"
 connectorx = {
     version = "0.4",
     features = ["dst_arrow", "src_postgres"],
+    optional = true,
 }
 log = "0.4"
-regex = "1.12"
-reqwest = { version = "0.13", features = [
+regex = "1.11"
+reqwest = { version = "0.12", features = [
     "cookies",
-    "form",
 ] }
 secrecy = "0.10"
 scraper = "0.26"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[features]
+all = ["read_sql"]
+read_sql = ["arrow", "connectorx"]
+
+[package.metadata.docs.rs]
+features = ["all"]

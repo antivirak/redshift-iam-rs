@@ -1,6 +1,10 @@
+#[cfg(feature = "read_sql")]
 use arrow::record_batch::RecordBatch;
+#[cfg(feature = "read_sql")]
 use connectorx::errors::ConnectorXOutError;
-use secrecy::{ExposeSecret, SecretString};
+#[cfg(feature = "read_sql")]
+use secrecy::ExposeSecret;
+use secrecy::SecretString;
 
 /// Client for executing queries against an Amazon Redshift cluster.
 ///
@@ -87,6 +91,7 @@ impl Redshift {
     }
 
     /// Executes `query` and returns the results as a `Vec<RecordBatch>`.
+    #[cfg(feature = "read_sql")]
     pub fn execute(&self, query: impl ToString) -> Result<Vec<RecordBatch>, ConnectorXOutError> {
         // could make more flexible by letting user specify output format
         let destination = connectorx::get_arrow::get_arrow(

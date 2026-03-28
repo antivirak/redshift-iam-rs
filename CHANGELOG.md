@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1]
+
+### Changed
+
+- Pinned only major version for most of the packages. I will rather proactively pin/fix once something breaks, than to strictly pin minor version, when the lib will most likely work with older ones as well.
+
 ## [0.3.0]
 
 ### ⚠ Breaking Changes

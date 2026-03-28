@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-#[cfg(feature = "connectorx")]
+#[cfg(feature = "read_sql")]
 use std::env;
 
 use base64::prelude::*;
@@ -120,7 +120,7 @@ fn test_redshift_connection_string_includes_cxprotocol() {
 ///     cargo test test_live_connection -- --ignored
 #[test]
 #[ignore = "requires live credentials via environment variables"]
-#[cfg(feature = "connectorx")]
+#[cfg(feature = "read_sql")]
 fn test_live_connection() {
     let host = env::var("HOST").expect("HOST env var required");
     let database = env::var("DATABASE").expect("DATABASE env var required");

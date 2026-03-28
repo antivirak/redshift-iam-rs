@@ -7,10 +7,10 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[cfg(feature = "read_sql")]
 use arrow::record_batch::RecordBatch;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_sdk_sts as sts;
-use connectorx::errors::ConnectorXOutError;
 use log::{debug, error};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::runtime::Runtime;
@@ -40,6 +40,28 @@ pub mod prelude {
     pub use crate::iam_provider::IamProvider;
     pub use crate::redshift::Redshift;
     pub use crate::saml_provider::PingCredentialsProvider;
+}
+
+#[derive(Debug)]
+pub enum RedshiftIamError {
+    ParseError(String),
+}
+
+#[allow(unreachable_patterns)]
+impl std::fmt::Display for RedshiftIamError {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RedshiftIamError::ParseError(description) => fmt.write_str(description),
+            _ => write!(fmt, "Unknown error occurred"),
+        }
+    }
+}
+
+#[cfg(feature = "read_sql")]
+impl From<connectorx::errors::ConnectorXOutError> for RedshiftIamError {
+    fn from(err: connectorx::errors::ConnectorXOutError) -> Self {
+        RedshiftIamError::ParseError(format!("Error occurred: {err}"))
+    }
 }
 
 /// Identifies the SAML provider plugin to use when an IdP host is present in the
@@ -182,7 +204,7 @@ pub fn register_provider(
 }
 
 /// Uses the main functionality from the crate modules to convert connection URI to Redshift type.
-fn get_redshift_from_uri(connection_uri: impl ToString) -> Result<Redshift, ConnectorXOutError> {
+fn get_redshift_from_uri(connection_uri: impl ToString) -> Result<Redshift, RedshiftIamError> {
     let uri_string = connection_uri.to_string();
     let mut uri_str = uri_string.trim();
 
@@ -190,7 +212,7 @@ fn get_redshift_from_uri(connection_uri: impl ToString) -> Result<Redshift, Conn
     let (scheme, tail) = match uri_str.split_once(':') {
         Some((scheme, tail)) => (scheme, tail),
         None => {
-            return Err(ConnectorXOutError::SourceNotSupport(format!(
+            return Err(RedshiftIamError::ParseError(format!(
                 "The connection uri needs to start with {pattern}"
             )));
         }
@@ -199,14 +221,14 @@ fn get_redshift_from_uri(connection_uri: impl ToString) -> Result<Redshift, Conn
         uri_str = tail;
     }
     if !uri_str.starts_with(pattern) && !uri_str.starts_with("redshift-iam://") {
-        return Err(ConnectorXOutError::SourceNotSupport(format!(
+        return Err(RedshiftIamError::ParseError(format!(
             "The connection uri needs to start with {pattern}"
         )));
     }
     uri_str = uri_str.split_once("://").unwrap().1;
     let uri_str = format!("redshift://{uri_str}");
     let redshift_url = reqwest::Url::parse(&uri_str).map_err(|e| {
-        ConnectorXOutError::SourceNotSupport(format!("Invalid Redshift IAM URI: {e}"))
+        RedshiftIamError::ParseError(format!("Invalid Redshift IAM URI: {e}"))
     })?;
     let database = redshift_url.path().trim_start_matches("/");
 
@@ -312,14 +334,15 @@ fn get_redshift_from_uri(connection_uri: impl ToString) -> Result<Redshift, Conn
 ///
 /// # Errors
 ///
-/// Returns [`ConnectorXOutError::SourceNotSupport`] if the URI does not start with
+/// Returns [`RedshiftIamError::ParseError`] if the URI does not start with
 /// `redshift:iam://`.
+#[cfg(feature = "read_sql")]
 pub fn read_sql(
     query: &str,
     connection_uri: impl ToString,
-) -> Result<Vec<RecordBatch>, ConnectorXOutError> {
-    let redshift = get_redshift_from_uri(connection_uri).unwrap();
-    redshift.execute(query)
+) -> Result<Vec<RecordBatch>, RedshiftIamError> {
+    let redshift = get_redshift_from_uri(connection_uri)?;
+    Ok(redshift.execute(query)?)
 }
 
 /// Converts a Redshift IAM connection URI into a parsed PostgreSQL connection string
@@ -353,7 +376,10 @@ pub fn redshift_to_postgres(connection_uri: impl ToString) -> reqwest::Url {
     let redshift_res = get_redshift_from_uri(connection_uri.to_string());
     if let Ok(redshift) = redshift_res {
         // already parsed before, safe to unwrap
-        reqwest::Url::parse(redshift.connection_string().expose_secret()).unwrap()
+        let mut uri = reqwest::Url::parse(redshift.connection_string().expose_secret()).unwrap();
+        // remove the protocol
+        uri.set_query(None);
+        uri
     } else {
         error!(
             "Logging to redshift using redshift-iam crate failed with: {:?}",

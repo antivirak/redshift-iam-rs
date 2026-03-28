@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.1]
+
+### Changed
+
+- Pinned only the major version for most packages. I’d rather proactively pin/fix once something breaks than strictly pin the minor version, especially when the library will most likely work with newer ones as well.
+
+## [0.3.0]
+
+### ⚠ Breaking Changes
+
+- **`read_sql` feature added**, and the `Redshift.execute()` or `read_sql` function is available only when the feature is enabled.
+
+### Added
+
+- **`redshift_to_postgres`** function added to exchange IAM/SAML identity for temporary Redshift credentials, returning a PostgreSQL JDBC-like connection string.
+
+### Changed
+
+- **Added new `RedshiftIamError`** for the crate. It is used instead of ConnectorXOutError.
+
 ## [0.2.1]
 
 ### Bugfix

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2]
+
+### Changed
+
+- Removed backtrace from anyhow.
+
 ## [0.3.1]
 
 ### Changed

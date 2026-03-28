@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Pinned only major version for most of the packages. I will rather proactively pin/fix once something breaks, than to strictly pin minor version, when the lib will most likely work with older ones as well.
+- Pinned only the major version for most packages. I’d rather proactively pin/fix once something breaks than strictly pin the minor version, especially when the library will most likely work with newer ones as well.
 
 ## [0.3.0]
 
@@ -14,7 +14,7 @@
 
 ### Added
 
-- **`redshift_to_postgres`** function added to exchange IAM/SAML identity for temporary redshift credentials, returning postgres jdbc-like connection string.
+- **`redshift_to_postgres`** function added to exchange IAM/SAML identity for temporary Redshift credentials, returning a PostgreSQL JDBC-like connection string.
 
 ### Changed
 
